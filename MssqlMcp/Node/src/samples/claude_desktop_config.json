@@ -1,11 +1,23 @@
 {
     "mcpServers": {
-      "mssql": {
+      "mssql-aad": {
         "command": "node",
         "args": [ "Q:/Repos/SQL-AI-samples/MssqlMcp/Node/dist/index.js" ],
         "env": {
           "SERVER_NAME": "your-server-name.database.windows.net",
           "DATABASE_NAME": "your-database-name",
+          "READONLY": "false"
+        }
+      },
+      "mssql-sql-auth": {
+        "command": "node",
+        "args": [ "Q:/Repos/SQL-AI-samples/MssqlMcp/Node/dist/index.js" ],
+        "env": {
+          "SERVER_NAME": "your-server-name.database.windows.net",
+          "DATABASE_NAME": "your-database-name",
+          "USE_USERNAME_PASSWORD": "true",
+          "SQL_USERNAME": "your-username",
+          "SQL_PASSWORD": "your-password",
           "READONLY": "false"
         }
       }

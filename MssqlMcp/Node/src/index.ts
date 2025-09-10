@@ -21,6 +21,35 @@ import { DropTableTool } from "./tools/DropTableTool.js";
 import { DefaultAzureCredential, InteractiveBrowserCredential } from "@azure/identity";
 import { DescribeTableTool } from "./tools/DescribeTableTool.js";
 
+// Load environment variables
+dotenv.config();
+
+// Validate required environment variables
+function validateEnvironmentVariables() {
+  const requiredVars = ['SERVER_NAME', 'DATABASE_NAME'];
+  const missingVars = requiredVars.filter(varName => !process.env[varName]);
+  
+  if (missingVars.length > 0) {
+    console.error(`Missing required environment variables: ${missingVars.join(', ')}`);
+    process.exit(1);
+  }
+
+  // Validate authentication-specific variables
+  const useUsernamePassword = process.env.USE_USERNAME_PASSWORD?.toLowerCase() === 'true';
+  if (useUsernamePassword) {
+    const authRequiredVars = ['SQL_USERNAME', 'SQL_PASSWORD'];
+    const missingAuthVars = authRequiredVars.filter(varName => !process.env[varName]);
+    
+    if (missingAuthVars.length > 0) {
+      console.error(`When using username/password authentication, the following environment variables are required: ${missingAuthVars.join(', ')}`);
+      process.exit(1);
+    }
+  }
+}
+
+// Validate environment variables on startup
+validateEnvironmentVariables();
+
 // MSSQL Database connection configuration
 // const credential = new DefaultAzureCredential();
 
@@ -29,36 +58,70 @@ let globalSqlPool: sql.ConnectionPool | null = null;
 let globalAccessToken: string | null = null;
 let globalTokenExpiresOn: Date | null = null;
 
-// Function to create SQL config with fresh access token, returns token and expiry
-export async function createSqlConfig(): Promise<{ config: sql.config, token: string, expiresOn: Date }> {
-  const credential = new InteractiveBrowserCredential({
-    redirectUri: 'http://localhost'
-    // disableAutomaticAuthentication : true
-  });
-  const accessToken = await credential.getToken('https://database.windows.net/.default');
-
+// Function to create SQL config with authentication method selection
+export async function createSqlConfig(): Promise<{ config: sql.config, token?: string, expiresOn?: Date }> {
   const trustServerCertificate = process.env.TRUST_SERVER_CERTIFICATE?.toLowerCase() === 'true';
   const connectionTimeout = process.env.CONNECTION_TIMEOUT ? parseInt(process.env.CONNECTION_TIMEOUT, 10) : 30;
+  
+  // Check authentication method preference
+  const useUsernamePassword = process.env.USE_USERNAME_PASSWORD?.toLowerCase() === 'true';
+  const username = process.env.SQL_USERNAME;
+  const password = process.env.SQL_PASSWORD;
 
-  return {
-    config: {
-      server: process.env.SERVER_NAME!,
-      database: process.env.DATABASE_NAME!,
-      options: {
-        encrypt: true,
-        trustServerCertificate
-      },
-      authentication: {
-        type: 'azure-active-directory-access-token',
+  if (useUsernamePassword && username && password) {
+    // Use SQL Server authentication with username/password
+    console.log('Using SQL Server authentication with username/password');
+    return {
+      config: {
+        server: process.env.SERVER_NAME!,
+        database: process.env.DATABASE_NAME!,
+        user: username,
+        password: password,
         options: {
-          token: accessToken?.token!,
+          encrypt: true,
+          trustServerCertificate
         },
-      },
-      connectionTimeout: connectionTimeout * 1000, // convert seconds to milliseconds
-    },
-    token: accessToken?.token!,
-    expiresOn: accessToken?.expiresOnTimestamp ? new Date(accessToken.expiresOnTimestamp) : new Date(Date.now() + 30 * 60 * 1000)
-  };
+        connectionTimeout: connectionTimeout * 1000, // convert seconds to milliseconds
+      }
+    };
+  } else {
+    // Use Azure Active Directory authentication (default)
+    console.log('Using Azure Active Directory authentication');
+    try {
+      const credential = new InteractiveBrowserCredential({
+        redirectUri: 'http://localhost'
+        // disableAutomaticAuthentication : true
+      });
+      const accessToken = await credential.getToken('https://database.windows.net/.default');
+
+      if (!accessToken?.token) {
+        throw new Error('Failed to obtain Azure AD access token');
+      }
+
+      return {
+        config: {
+          server: process.env.SERVER_NAME!,
+          database: process.env.DATABASE_NAME!,
+          options: {
+            encrypt: true,
+            trustServerCertificate
+          },
+          authentication: {
+            type: 'azure-active-directory-access-token',
+            options: {
+              token: accessToken.token,
+            },
+          },
+          connectionTimeout: connectionTimeout * 1000, // convert seconds to milliseconds
+        },
+        token: accessToken.token,
+        expiresOn: accessToken.expiresOnTimestamp ? new Date(accessToken.expiresOnTimestamp) : new Date(Date.now() + 30 * 60 * 1000)
+      };
+    } catch (error) {
+      console.error('Failed to authenticate with Azure AD:', error);
+      throw error;
+    }
+  }
 }
 
 const updateDataTool = new UpdateDataTool();
@@ -164,6 +227,28 @@ runServer().catch((error) => {
 // Connect to SQL only when handling a request
 
 async function ensureSqlConnection() {
+  // Check if using username/password authentication (no token management needed)
+  const useUsernamePassword = process.env.USE_USERNAME_PASSWORD?.toLowerCase() === 'true';
+  
+  if (useUsernamePassword) {
+    // For username/password auth, just check if connection exists and is valid
+    if (globalSqlPool && globalSqlPool.connected) {
+      return;
+    }
+    
+    // Create new connection with username/password
+    const { config } = await createSqlConfig();
+    
+    // Close old pool if exists
+    if (globalSqlPool && globalSqlPool.connected) {
+      await globalSqlPool.close();
+    }
+    
+    globalSqlPool = await sql.connect(config);
+    return;
+  }
+
+  // For Azure AD authentication, manage tokens
   // If we have a pool and it's connected, and the token is still valid, reuse it
   if (
     globalSqlPool &&
@@ -177,8 +262,8 @@ async function ensureSqlConnection() {
 
   // Otherwise, get a new token and reconnect
   const { config, token, expiresOn } = await createSqlConfig();
-  globalAccessToken = token;
-  globalTokenExpiresOn = expiresOn;
+  globalAccessToken = token || null;
+  globalTokenExpiresOn = expiresOn || null;
 
   // Close old pool if exists
   if (globalSqlPool && globalSqlPool.connected) {

@@ -46,6 +46,13 @@ This server leverages the Model Context Protocol (MCP), a versatile framework th
    npm run build
    ```
 
+3. **Configure Environment Variables (Optional)**  
+   For local development, you can use environment variables instead of configuring them in the MCP client:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your database configuration
+   ```
+
 ## Configuration Setup
 
 ### Option 1: VS Code Agent Setup
@@ -145,11 +152,44 @@ This server leverages the Model Context Protocol (MCP), a versatile framework th
 - **CONNECTION_TIMEOUT**: (Optional) Connection timeout in seconds. Defaults to `30` if not set.
 - **TRUST_SERVER_CERTIFICATE**: (Optional) Set to `"true"` to trust self-signed server certificates (useful for development or when connecting to servers with self-signed certs). Defaults to `"false"`.
 
+#### Authentication Options
+
+**Option 1: Azure Active Directory Authentication (Default)**
+The server will use Azure Active Directory interactive browser authentication by default. No additional configuration is needed.
+
+**Option 2: SQL Server Authentication (Username/Password)**
+To use SQL Server authentication with username and password, add these additional environment variables:
+- **USE_USERNAME_PASSWORD**: Set to `"true"` to enable username/password authentication
+- **SQL_USERNAME**: Your SQL Server username
+- **SQL_PASSWORD**: Your SQL Server password
+
+Example configuration with SQL Server authentication:
+```json
+{
+  "mcpServers": {
+    "mssql": {
+      "command": "node",
+      "args": ["C:/path/to/your/Node/dist/index.js"],
+      "env": {
+        "SERVER_NAME": "your-server-name.database.windows.net",
+        "DATABASE_NAME": "your-database-name",
+        "USE_USERNAME_PASSWORD": "true",
+        "SQL_USERNAME": "your-username",
+        "SQL_PASSWORD": "your-password",
+        "READONLY": "false"
+      }
+    }
+  }
+}
+```
+
 ## Sample Configurations
 
 You can find sample configuration files in the `src/samples/` folder:
 - `claude_desktop_config.json` - For Claude Desktop
 - `vscode_agent_config.json` - For VS Code Agent
+
+For detailed authentication examples and configuration options, see [AUTHENTICATION.md](AUTHENTICATION.md).
 
 ## Usage Examples
 
